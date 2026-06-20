@@ -1,12 +1,21 @@
 package com.example.rma_2023270048.api;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.os.Handler;
+import android.os.Looper;
+import android.widget.Toast;
 
+import com.example.rma_2023270048.database.AppDatabase;
+import com.example.rma_2023270048.ui.auth.AuthActivity;
 import com.example.rma_2023270048.utils.LocalDateTimeAdapter;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.concurrent.Executors;
 
 import okhttp3.Interceptor;
 import okhttp3.OkHttpClient;
@@ -22,6 +31,7 @@ public class ApiClient {
 
     private static synchronized Retrofit getClient(Context context) {
         if (retrofit == null) {
+            Context appContext = context.getApplicationContext();
 
             OkHttpClient okHttpClient = new OkHttpClient.Builder()
                     .addInterceptor(new Interceptor() {
@@ -30,23 +40,46 @@ public class ApiClient {
                             Request request = chain.request();
 
                             // get token from shared preferences
-                            SharedPreferences sharedPreferences = context.getApplicationContext()
+                            SharedPreferences sharedPreferences = appContext.getApplicationContext()
                                     .getSharedPreferences("AppPrefs", Context.MODE_PRIVATE);
                             String token = sharedPreferences.getString("token", "");
 
+                            Response response;
                             if (!token.isEmpty()) {
                                 String authHeaderValue = token.startsWith("Bearer ") ? token : "Bearer " + token;
 
                                 Request newReq = request.newBuilder()
                                         .header("Authorization", authHeaderValue)
                                         .build();
-                                return chain.proceed(newReq);
+                                response = chain.proceed(newReq);
+                            } else {
+                                response = chain.proceed(request);
+                            }
+                            // in case token invalidates
+                            if (response.code() == 401) {
+                                sharedPreferences.edit()
+                                        .remove("token")
+                                        .remove("last_viewed_container_id")
+                                        .apply();
+
+                                Executors.newSingleThreadExecutor().execute(() -> {
+                                    AppDatabase.getInstance(appContext)
+                                            .containerDao().clearCache();
+                                });
+
+                                new Handler(Looper.getMainLooper()).post(() -> {
+                                    Toast.makeText(appContext, "Session expired. Please log in again", Toast.LENGTH_LONG).show();
+                                });
+
+                                Intent intent = new Intent(appContext, AuthActivity.class);
+                                intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                                appContext.startActivity(intent);
                             }
 
-                            return chain.proceed(request);
+                            return response;
                         }
                     }).build();
-            com.google.gson.Gson gson = new com.google.gson.GsonBuilder()
+            Gson gson = new GsonBuilder()
                     .registerTypeAdapter(LocalDateTime.class, new LocalDateTimeAdapter())
                     .create();
 
@@ -61,4 +94,5 @@ public class ApiClient {
     public static synchronized <T> T createService(Class<T> serviceClass, Context context) {
         return getClient(context).create(serviceClass);
     }
+
 }

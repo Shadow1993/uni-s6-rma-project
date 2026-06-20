@@ -18,6 +18,9 @@ public interface ContainerDao {
     @Query("SELECT * FROM container_cache")
     List<Container> getAllContainers();
 
+    @Query("SELECT * FROM container_cache WHERE id = :containerId")
+    Container getContainerById(int containerId);
+
     @Query("DELETE FROM container_cache")
     void clearCache();
 }
